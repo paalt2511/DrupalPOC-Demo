@@ -1,0 +1,149 @@
+<?php
+
+/**
+ * @file
+ * Send Bulk email using Drupal queue on cronjob.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function custom_email_menu() {
+  $items['email-functionality'] = array(
+    'title' => 'Custom email functionality',
+    'description' => 'Create a Custom email functionality with cron.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('emailcustom_form'),
+    'access callback' => TRUE,
+  );
+  return $items;
+}
+
+/**
+ * Form for getting user's data and marking it to queue.
+ *
+ * @param $form
+ * @param $form_state
+ * @return array
+ */
+function emailcustom_form($form,$form_state) {
+  global $base_url;
+  $csvFile = $base_url . drupal_get_path('module','custom_email') . '/data/' . 'test.csv';
+
+  // Data coming from csv file.
+  $user_data = getDataCsv($csvFile);
+
+  $form['user_data'] = array(
+    '#type' => 'select',
+    '#title' => t('Select user'),
+    '#options' => $user_data,
+    '#required' => TRUE,
+  );
+  $form['name'] = array(
+    '#type' => 'value',
+    '#default_value' => 'queue_emailcustom',
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Add Data in queue'),
+  );
+
+  return $form;
+}
+
+/**
+ * @param $csv_file
+ * @return array
+ */
+function getDataCsv($csv_file) {
+  $file_handle = fopen($csv_file, 'r');
+  $user_data = [];
+  $line_of_text = [];
+  while (!feof($file_handle)) {
+    $line_of_text[] = fgetcsv($file_handle, 1024);
+  }
+  fclose($file_handle);
+  if (!empty($line_of_text)) {
+    foreach ($line_of_text as $value) {
+      $user_data[$value[1]] = $value[0];
+    }
+  }
+  return $user_data;
+}
+
+/**
+ * @param $form
+ * @param $form_state
+ * Submit handler for emailcustom_form form.
+ */
+function emailcustom_form_submit($form, &$form_state) {
+  // Getting the name of the queue
+  $drupal_queue = DrupalQueue::get($form_state['values']['name']);
+  $drupal_queue->createQueue();
+  // Creating data for the queue.
+  $data = array(
+    'user_mail' => $form_state['values']['user_data'],
+  );
+
+  // marking data for the drupal queue.
+  $drupal_queue->createItem($data);
+  $get_count = $drupal_queue->numberOfItems();
+  drupal_set_message(t('Marking your email with email ID @content in queue. Total number of items in the queue are @count.', array('@count' => $get_count, '@content' => $form_state['values']['user_data'])));
+  // rebuilding form_state and marking it true.
+  $form_state['rebuild'] = TRUE;
+  unset($form_state['input']['user_mail']);
+}
+
+/**
+ * Implements hook_cron().
+ */
+function custom_email_cron() {
+  $final_queue = DrupalQueue::get('queue_emailcustom');
+  $final_queue->createItem(array());
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ */
+function custom_email_cron_queue_info() {
+  $queues = array();
+  $queues['queue_emailcustom'] = array(
+    'worker callback' => 'custom_email_callback',
+    'time' => 60,
+  );
+  return $queues;
+}
+
+/**
+ * @param $data
+ */
+function custom_email_callback($data) {
+  // Preparing data for sending on email like message and email id.
+  global $language;
+  $email = $data['user_mail'];
+  $params = array(
+    'subject' => t('Custom code for sending email with cron'),
+    'body' => t('default text'),
+  );
+  drupal_mail('custommail', 'queue', $email, $language, $params);
+  // Getting the name of the queue that was set earlier.
+  $prepared_queue = DrupalQueue::get('queue_emailcustom');
+  $prepared_queue->createQueue();
+  $count = $prepared_queue->numberOfItems();
+  // Deleting item after 15 seconds or ew can change according to our need.
+  $data_final = $prepared_queue->claimItem(15);
+  $prepared_queue->deleteItem($data_final);
+}
+
+/**
+ * Implements hook_mail().
+ */
+function custom_email_mail($key, &$message, $params) {
+  switch ($key) {
+    case "queue" :
+        // Get parameters set in callback and trigger the email.
+        $message['subject'] = $params['subject'];
+        $message['body'][] = $params['body'];
+      break;
+  }
+}

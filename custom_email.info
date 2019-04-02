@@ -1,0 +1,6 @@
+name = Custom Email
+description = Enables user to send email with cron.
+package = Custom
+version = 7.x-1.x
+core = 7.x
+
